@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Local evidence and exported forensic artifacts
+extracted.ad1
+$MFT
+$Extend/
+tests/
+tests/fixtures/

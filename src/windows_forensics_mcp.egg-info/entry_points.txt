@@ -1,0 +1,2 @@
+[console_scripts]
+windows-forensics-mcp = windows_forensics_mcp.server:main

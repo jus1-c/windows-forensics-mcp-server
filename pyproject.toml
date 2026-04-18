@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "windows-forensics-mcp"
+version = "0.1.0"
+description = "A local-first MCP server for Windows forensic artifacts"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "OpenCode" }
+]
+dependencies = [
+  "mcp>=1.12.4,<2",
+  "dissect.esedb",
+  "dissect.ntfs",
+  "libesedb-python",
+  "libevtx-python",
+  "libfsntfs-python",
+  "libfwsi-python",
+  "liblnk-python",
+  "libolecf-python",
+  "libregf-python",
+  "libscca-python",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Information Technology",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Security",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.scripts]
+windows-forensics-mcp = "windows_forensics_mcp.server:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
