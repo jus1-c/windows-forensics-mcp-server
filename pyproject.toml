@@ -16,6 +16,7 @@ dependencies = [
   "mcp>=1.12.4,<2",
   "dissect.esedb",
   "dissect.ntfs",
+  "dpapick3>=0.7.1",
   "libesedb-python",
   "libevtx-python",
   "libfsntfs-python",
@@ -24,6 +25,7 @@ dependencies = [
   "libolecf-python",
   "libregf-python",
   "libscca-python",
+  "pypykatz>=0.6.13",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

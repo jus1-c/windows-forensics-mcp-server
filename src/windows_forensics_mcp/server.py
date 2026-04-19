@@ -20,6 +20,7 @@ from windows_forensics_mcp.tools.prefetch import register_tools as register_pref
 from windows_forensics_mcp.tools.registry import register_tools as register_registry_tools
 from windows_forensics_mcp.tools.srum import register_tools as register_srum_tools
 from windows_forensics_mcp.tools.usn import register_tools as register_usn_tools
+from windows_forensics_mcp.tools.windows_dpapi import register_tools as register_windows_dpapi_tools
 
 
 def create_server() -> Any:
@@ -32,6 +33,7 @@ def create_server() -> Any:
     register_tools(mcp)
     register_evtx_tools(mcp)
     register_registry_tools(mcp)
+    register_windows_dpapi_tools(mcp)
     register_prefetch_tools(mcp)
     register_lnk_tools(mcp)
     register_jumplist_tools(mcp)

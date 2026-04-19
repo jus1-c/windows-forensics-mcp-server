@@ -25,3 +25,11 @@ class OptionalDependencyError(WindowsForensicsError):
 
 class UnsupportedArtifactError(WindowsForensicsError):
     code = "unsupported_artifact_error"
+
+
+class ToolInputError(WindowsForensicsError):
+    code = "tool_input_error"
+
+
+class DecryptionError(WindowsForensicsError):
+    code = "decryption_error"

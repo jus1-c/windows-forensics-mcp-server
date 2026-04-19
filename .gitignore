@@ -12,3 +12,5 @@ $MFT
 $Extend/
 tests/
 tests/fixtures/
+build
+live_validation

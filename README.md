@@ -10,6 +10,7 @@ A local-first MCP server for Windows forensics that lets AI agents analyze Windo
 
 - **Local-first MCP**: built for `stdio` so Claude Desktop, VS Code, Cline, and OpenCode can call it directly on local files
 - **Windows Artifact Coverage**: EVTX, Registry hives, Prefetch, LNK, Jump Lists, Shell Items, SRUM, `$MFT`, and USN Journal
+- **Windows DPAPI Coverage**: offline DPAPI masterkey recovery, generic blob decryption, Chromium legacy key recovery, Credential Manager credential parsing, and Vault parsing
 - **Native-first Parsing**: uses `libyal` bindings where practical, with `dissect.*` fallbacks where they work better on exported samples
 - **Offline Analysis**: works against exported hives, EVTX files, prefetch files, SRUM databases, and NTFS metadata exports
 - **Structured JSON Output**: every tool returns machine-friendly results for downstream agent workflows
@@ -27,6 +28,7 @@ A local-first MCP server for Windows forensics that lets AI agents analyze Windo
 - Exported `$MFT`
 - Exported `$UsnJrnl` stream files
 - AD1 artifact discovery support
+- Windows DPAPI: `Protect/<SID>`, `CREDHIST`, offline `SYSTEM` / `SECURITY`, Chromium `Local State`, Credential Manager credential files, and Vault directories
 
 ## Requirements
 
@@ -154,6 +156,15 @@ Add to `~/.opencode/opencode.json`:
 - `registry_search(hive_path, pattern, scope="all", max_results=50, max_depth=32)`
 - `registry_extract_artifact(hive_path, artifact_type)`
 
+### Windows DPAPI
+
+- `windows_dpapi_recover_masterkeys(protect_dir, sid, password=None, nt_hash=None, system_hive_path=None, security_hive_path=None, credhist_path=None)`
+- `windows_dpapi_decrypt_blob(masterkeys_by_guid, blob_hex=None, blob_path=None, entropy_hex=None)`
+- `windows_dpapi_recover_chromium_master_key(local_state_path, masterkeys_by_guid=None, protect_dir=None, sid=None, password=None, nt_hash=None, system_hive_path=None, security_hive_path=None, credhist_path=None)`
+- `windows_dpapi_parse_credential_file(file_path, masterkeys_by_guid=None, protect_dir=None, sid=None, password=None, nt_hash=None, system_hive_path=None, security_hive_path=None, credhist_path=None)`
+- `windows_dpapi_parse_credentials_directory(directory_path, masterkeys_by_guid=None, protect_dir=None, sid=None, password=None, nt_hash=None, system_hive_path=None, security_hive_path=None, credhist_path=None)`
+- `windows_dpapi_parse_vault_directory(directory_path, masterkeys_by_guid=None, protect_dir=None, sid=None, password=None, nt_hash=None, system_hive_path=None, security_hive_path=None, credhist_path=None)`
+
 ### Prefetch
 
 - `prefetch_parse(file_path)`
@@ -203,6 +214,43 @@ Search this PowerShell event log for interesting events and build a timeline:
 ```
 Extract UserAssist and RunMRU from this NTUSER.DAT:
 /cases/host1/NTUSER.DAT
+```
+
+### Recover DPAPI masterkeys offline
+
+```
+Recover DPAPI masterkeys from this user's Protect directory using a blank password and exported SYSTEM/SECURITY hives:
+Protect dir: /cases/host1/Users/Alice/AppData/Roaming/Microsoft/Protect/S-1-5-21-...
+SYSTEM: /cases/host1/SYSTEM
+SECURITY: /cases/host1/SECURITY
+```
+
+### Recover Chromium legacy master key offline
+
+```
+Recover the Chromium legacy AES key from this Local State file using recovered DPAPI masterkeys:
+/cases/host1/Users/Alice/AppData/Local/Google/Chrome/User Data/Local State
+```
+
+### Parse a Credential Manager file
+
+```
+Decrypt this Credential Manager credential file using offline DPAPI masterkeys:
+/cases/host1/Users/Alice/AppData/Roaming/Microsoft/Credentials/ABCDEF1234567890...
+```
+
+### Parse an entire Credentials directory
+
+```
+Decrypt every Credential Manager file in this directory using offline DPAPI masterkeys:
+/cases/host1/Users/Alice/AppData/Roaming/Microsoft/Credentials
+```
+
+### Parse a Vault directory
+
+```
+Decrypt this Windows Vault directory using offline DPAPI masterkeys:
+/cases/host1/Users/Alice/AppData/Local/Microsoft/Vault/{GUID}
 ```
 
 ### Analyze execution evidence
@@ -255,7 +303,6 @@ windows-forensics-mcp-server/
 │       ├── errors.py
 │       ├── schemas.py
 │       └── server.py
-├── tests/
 ├── pyproject.toml
 └── README.md
 ```
