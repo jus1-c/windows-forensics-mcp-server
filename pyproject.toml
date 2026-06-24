@@ -27,13 +27,6 @@ dependencies = [
   "libscca-python",
   "pypykatz>=0.6.13",
 ]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=8",
-  "ruff>=0.6",
-  "mypy>=1.10",
-]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Information Technology",
@@ -43,6 +36,13 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Topic :: Security",
   "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "mypy>=1.10",
 ]
 
 [project.scripts]
