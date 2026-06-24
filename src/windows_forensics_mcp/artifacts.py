@@ -9,7 +9,6 @@ from windows_forensics_mcp.schemas import ArtifactDescriptor
 from windows_forensics_mcp.utils.hashing import sha256_file
 from windows_forensics_mcp.utils.paths import resolve_input_path
 
-
 _REGISTRY_HIVE_NAMES: dict[str, tuple[str, str, str, str, list[str]]] = {
     "software": (
         "registry_hive_software",
@@ -303,7 +302,9 @@ def identify_artifact(path: Path, include_hash: bool = True) -> ArtifactDescript
         descriptor.sha256 = sha256_file(path, chunk_size=settings.hash_chunk_size)
 
     if descriptor.artifact_type == "usn_journal" and descriptor.size == 0:
-        descriptor.warnings.append("USN journal sample is empty; positive parsing tests will need a non-empty $J export")
+        descriptor.warnings.append(
+            "USN journal sample is empty; positive parsing tests will need a non-empty $J export"
+        )
 
     return descriptor
 

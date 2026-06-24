@@ -1,15 +1,12 @@
 """Discovery tools exposed by the MCP server."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from windows_forensics_mcp.artifacts import identify_artifact, identify_artifact_path
 from windows_forensics_mcp.config import settings
 from windows_forensics_mcp.schemas import DirectoryScanResult
 from windows_forensics_mcp.utils.paths import ensure_directory, resolve_input_path
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+from windows_forensics_mcp.utils.validation import validate_limit
 
 
 def scan_directory_path(
@@ -21,20 +18,32 @@ def scan_directory_path(
     include_unknown: bool = False,
 ) -> DirectoryScanResult:
     root = ensure_directory(resolve_input_path(raw_path))
-    max_entries = max_entries or settings.max_scan_entries
+    # Use ``is None`` (not falsiness) so an explicit max_entries=0 is rejected
+    # by validate_limit instead of silently becoming the default.
+    if max_entries is None:
+        max_entries = settings.max_scan_entries
+    max_entries = validate_limit(max_entries, parameter="max_entries")
 
     warnings: list[str] = []
     findings: list[dict[str, object]] = []
     scanned_entries = 0
     truncated = False
 
+    # Track resolved directories already queued so symlink loops (a -> ../a)
+    # cannot cause unbounded traversal.
+    visited: set[str] = set()
+    try:
+        visited.add(str(root.resolve()))
+    except OSError:
+        visited.add(str(root))
+
     pending: list[Path] = [root]
     while pending:
         current = pending.pop()
         try:
             directory_entries = sorted(current.iterdir(), key=lambda item: item.name.lower())
-        except PermissionError:
-            warnings.append(f"Permission denied while scanning: {current}")
+        except OSError as exc:
+            warnings.append(f"Could not scan {current}: {type(exc).__name__}: {exc}")
             continue
 
         for entry in directory_entries:
@@ -48,6 +57,14 @@ def scan_directory_path(
                     break
 
             if recursive and entry.is_dir():
+                try:
+                    resolved = str(entry.resolve())
+                except OSError:
+                    resolved = str(entry)
+                if resolved in visited:
+                    warnings.append(f"Skipped already-visited path (symlink loop?): {entry}")
+                    continue
+                visited.add(resolved)
                 pending.append(entry)
 
         if truncated:

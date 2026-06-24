@@ -1,20 +1,16 @@
 """Windows DPAPI recovery and artifact decryption tools."""
 
-from __future__ import annotations
-
 import base64
+import binascii
 import json
+import uuid
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-import uuid
+from typing import Any
 
 from windows_forensics_mcp.errors import DecryptionError, ToolInputError, UnsupportedArtifactError
 from windows_forensics_mcp.utils.deps import require_module
 from windows_forensics_mcp.utils.paths import ensure_directory, ensure_file, resolve_input_path
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
 
 
 def _require_dpapick3() -> tuple[Any, Any, Any]:
@@ -294,8 +290,12 @@ def _resolve_or_recover_masterkeys(
     credhist_path: str | None,
 ) -> tuple[dict[str, str], dict[str, object] | None]:
     if masterkeys_by_guid is not None:
-        _validate_masterkeys(masterkeys_by_guid)
-        return masterkeys_by_guid, None
+        validated = _validate_masterkeys(masterkeys_by_guid)
+        # Return the validated, GUID-normalized mapping (as hex) so downstream
+        # consumers share one canonical form instead of re-normalizing the raw
+        # caller-supplied keys.
+        normalized = {guid: key_bytes.hex() for guid, key_bytes in validated.items()}
+        return normalized, None
     if protect_dir is None or sid is None:
         raise ToolInputError("Provide either masterkeys_by_guid or both protect_dir and sid")
     recovery = windows_dpapi_recover_masterkeys_path(
@@ -371,7 +371,12 @@ def windows_dpapi_recover_chromium_master_key_path(
     if not encrypted_key_b64:
         return result
 
-    encrypted_key_blob = base64.b64decode(encrypted_key_b64)
+    try:
+        encrypted_key_blob = base64.b64decode(encrypted_key_b64)
+    except (ValueError, binascii.Error) as exc:
+        raise UnsupportedArtifactError(
+            f"Failed to base64-decode os_crypt.encrypted_key: {exc}"
+        ) from exc
     if encrypted_key_blob.startswith(b"DPAPI"):
         encrypted_key_blob = encrypted_key_blob[5:]
     blob_result = windows_dpapi_decrypt_blob_path(
@@ -568,7 +573,7 @@ def windows_dpapi_parse_vault_directory_path(
     return result
 
 
-def register_tools(mcp: FastMCP) -> None:
+def register_tools(mcp) -> None:
     @mcp.tool()
     def windows_dpapi_recover_masterkeys(
         protect_dir: str,

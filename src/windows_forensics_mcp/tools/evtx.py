@@ -1,14 +1,16 @@
 """EVTX parsing tools."""
 
-from typing import TYPE_CHECKING, Iterable, Iterator
+from collections.abc import Iterator
+from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
 from windows_forensics_mcp.utils.deps import require_module
 from windows_forensics_mcp.utils.paths import ensure_file, resolve_input_path
 from windows_forensics_mcp.utils.time import isoformat_datetime
+from windows_forensics_mcp.utils.validation import validate_limit, validate_offset
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    pass
 
 
 EVENT_NS = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
@@ -132,6 +134,8 @@ def evtx_info_path(file_path: str) -> dict[str, object]:
 
 
 def evtx_list_records_path(file_path: str, limit: int = 50, offset: int = 0) -> dict[str, object]:
+    limit = validate_limit(limit)
+    offset = validate_offset(offset)
     path = ensure_file(resolve_input_path(file_path))
     evtx_file = _open_evtx_file(str(path))
 
@@ -167,6 +171,7 @@ def evtx_search_path(
     text_contains: str | None = None,
     limit: int = 50,
 ) -> dict[str, object]:
+    limit = validate_limit(limit)
     path = ensure_file(resolve_input_path(file_path))
     evtx_file = _open_evtx_file(str(path))
 

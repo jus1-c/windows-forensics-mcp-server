@@ -1,15 +1,11 @@
 """LNK and shell item parsing tools."""
 
 import io
-from pathlib import Path
-from typing import TYPE_CHECKING
 
 from windows_forensics_mcp.utils.deps import require_module
 from windows_forensics_mcp.utils.paths import ensure_directory, ensure_file, resolve_input_path
 from windows_forensics_mcp.utils.time import filetime_to_iso
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+from windows_forensics_mcp.utils.validation import validate_limit
 
 
 def _open_lnk_file(path: str):
@@ -59,7 +55,8 @@ def _parse_shell_item_bytes(data: bytes) -> list[dict[str, object]]:
 def parse_lnk_bytes(data: bytes, source_path: str) -> dict[str, object]:
     pylnk = require_module("pylnk", "liblnk-python")
     lnk_file = pylnk.file()
-    lnk_file.open_file_object(io.BytesIO(data))
+    stream = io.BytesIO(data)
+    lnk_file.open_file_object(stream)
 
     try:
         raw_shell_items = lnk_file.get_link_target_identifier_data()
@@ -84,6 +81,7 @@ def parse_lnk_bytes(data: bytes, source_path: str) -> dict[str, object]:
         }
     finally:
         lnk_file.close()
+        stream.close()
 
 
 def lnk_parse_path(file_path: str) -> dict[str, object]:
@@ -101,6 +99,7 @@ def shellitems_parse_path(file_path: str) -> dict[str, object]:
 
 
 def lnk_directory_summary_path(directory_path: str, limit: int = 50) -> dict[str, object]:
+    limit = validate_limit(limit)
     path = ensure_directory(resolve_input_path(directory_path))
     entries = []
 
@@ -115,8 +114,8 @@ def lnk_directory_summary_path(directory_path: str, limit: int = 50) -> dict[str
                     "command_line_arguments": parsed["command_line_arguments"],
                 }
             )
-        except OSError as exc:
-            entries.append({"source_path": str(file_path), "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - libyal parse errors are not all OSError
+            entries.append({"source_path": str(file_path), "error": f"{type(exc).__name__}: {exc}"})
 
     return {
         "directory_path": str(path),

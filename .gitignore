@@ -1,16 +1,33 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
 
-# Local evidence and exported forensic artifacts
+# CodeGraph index
+.codegraph/
+
+# Local evidence and exported forensic artifacts (never commit case data)
+*.img
+*.E01
+*.vhdx
+*.vmdk
+*.ad1
 extracted.ad1
 $MFT
 $Extend/
-tests/
+live_validation/
+
+# Real artifact fixtures derived from case evidence (tests/*.py are source, kept)
 tests/fixtures/
-build
-live_validation
+
+# Local validation outputs
+/tmp_validation/

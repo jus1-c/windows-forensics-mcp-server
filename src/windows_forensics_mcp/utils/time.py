@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import struct
-
+from datetime import datetime, timedelta, timezone
 
 FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
 OLE_AUTOMATION_EPOCH = datetime(1899, 12, 30, tzinfo=timezone.utc)

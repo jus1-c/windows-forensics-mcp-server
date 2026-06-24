@@ -1,14 +1,11 @@
 """Windows Prefetch parsing tools."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from windows_forensics_mcp.utils.deps import require_module
 from windows_forensics_mcp.utils.paths import ensure_directory, ensure_file, resolve_input_path
 from windows_forensics_mcp.utils.time import filetime_to_iso
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+from windows_forensics_mcp.utils.validation import validate_limit
 
 
 def _open_prefetch_file(path: str):
@@ -20,6 +17,8 @@ def _open_prefetch_file(path: str):
 
 def _prefetch_last_run_times(prefetch_file) -> list[str]:
     run_times: list[str] = []
+    # Win8+ prefetch stores up to 8 last-run timestamps; older formats expose
+    # fewer and raise once we run past the available entries.
     for index in range(8):
         try:
             timestamp = prefetch_file.get_last_run_time_as_integer(index)
@@ -36,19 +35,23 @@ def _prefetch_last_run_times(prefetch_file) -> list[str]:
 def _prefetch_volumes(prefetch_file) -> list[dict[str, object]]:
     volumes = []
     for index in range(prefetch_file.number_of_volumes):
-        volume = prefetch_file.get_volume_information(index)
-        volumes.append(
-            {
-                "index": index,
-                "device_path": volume.device_path,
-                "serial_number": volume.serial_number,
-                "creation_time": filetime_to_iso(volume.get_creation_time_as_integer()),
-            }
-        )
+        try:
+            volume = prefetch_file.get_volume_information(index)
+            volumes.append(
+                {
+                    "index": index,
+                    "device_path": volume.device_path,
+                    "serial_number": volume.serial_number,
+                    "creation_time": filetime_to_iso(volume.get_creation_time_as_integer()),
+                }
+            )
+        except OSError as exc:
+            volumes.append({"index": index, "error": str(exc)})
     return volumes
 
 
 def prefetch_parse_path(file_path: str, filename_limit: int = 200) -> dict[str, object]:
+    filename_limit = validate_limit(filename_limit, parameter="filename_limit")
     path = ensure_file(resolve_input_path(file_path))
     prefetch_file = _open_prefetch_file(str(path))
 
@@ -58,7 +61,7 @@ def prefetch_parse_path(file_path: str, filename_limit: int = 200) -> dict[str, 
             filenames.append(prefetch_file.get_filename(index))
 
         file_metrics = []
-        for index in range(min(prefetch_file.number_of_file_metrics_entries, 50)):
+        for index in range(min(prefetch_file.number_of_file_metrics_entries, filename_limit)):
             metric = prefetch_file.get_file_metrics_entry(index)
             file_metrics.append(
                 {
@@ -84,6 +87,7 @@ def prefetch_parse_path(file_path: str, filename_limit: int = 200) -> dict[str, 
 
 
 def prefetch_directory_summary_path(directory_path: str, limit: int = 50) -> dict[str, object]:
+    limit = validate_limit(limit)
     path = ensure_directory(resolve_input_path(directory_path))
     entries = []
 
@@ -109,6 +113,7 @@ def prefetch_directory_summary_path(directory_path: str, limit: int = 50) -> dic
 
 
 def prefetch_timeline_path(path_or_directory: str, limit: int = 100) -> dict[str, object]:
+    limit = validate_limit(limit)
     path = resolve_input_path(path_or_directory)
 
     files: list[Path]
@@ -118,8 +123,13 @@ def prefetch_timeline_path(path_or_directory: str, limit: int = 100) -> dict[str
         files = [ensure_file(path)]
 
     timeline = []
+    warnings: list[str] = []
     for file_path in files:
-        parsed = prefetch_parse_path(str(file_path), filename_limit=10)
+        try:
+            parsed = prefetch_parse_path(str(file_path), filename_limit=10)
+        except OSError as exc:
+            warnings.append(f"Could not parse {file_path}: {exc}")
+            continue
         for timestamp in parsed["last_run_times"]:
             timeline.append(
                 {
@@ -139,6 +149,7 @@ def prefetch_timeline_path(path_or_directory: str, limit: int = 100) -> dict[str
     return {
         "source_path": str(path),
         "timeline": timeline,
+        "warnings": warnings,
     }
 
 

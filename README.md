@@ -19,7 +19,8 @@ A local-first MCP server for Windows forensics that lets AI agents analyze Windo
 ## Current Artifact Support
 
 - EVTX event logs
-- Offline registry hives: `SYSTEM`, `SOFTWARE`, `NTUSER.DAT`, `UsrClass.dat`, and related hive patterns
+- Offline registry hives: `SYSTEM`, `SOFTWARE`, `NTUSER.DAT`, `UsrClass.dat`, `Amcache.hve`, and related hive patterns
+- Registry artifact extractors: Run/RunOnce, UserAssist, RecentDocs, RunMRU, Amcache, ShimCache (AppCompatCache), and USBSTOR
 - Windows Prefetch `.pf`
 - Windows shortcuts `.lnk`
 - Jump Lists: `automaticDestinations-ms` and `customDestinations-ms`
@@ -65,6 +66,14 @@ py -3.10 -m venv .venv
 ```bash
 python -m pip install --upgrade pip
 python -m pip install -e .
+```
+
+For development (linting and tests):
+
+```bash
+python -m pip install -e ".[dev]"
+ruff check src tests
+pytest -q
 ```
 
 ## Run
@@ -151,10 +160,11 @@ Add to `~/.opencode/opencode.json`:
 ### Registry
 
 - `registry_hive_info(hive_path)`
-- `registry_list_keys(hive_path, key_path=None, depth=1)`
+- `registry_list_keys(hive_path, key_path=None, depth=1, max_keys=5000)`
 - `registry_get_values(hive_path, key_path=None)`
 - `registry_search(hive_path, pattern, scope="all", max_results=50, max_depth=32)`
 - `registry_extract_artifact(hive_path, artifact_type)`
+  - Supported `artifact_type` values: `run` / `runonce` / `autoruns`, `userassist`, `recentdocs`, `runmru`, `amcache`, `shimcache`, `usbstor`
 
 ### Windows DPAPI
 
@@ -176,7 +186,7 @@ Add to `~/.opencode/opencode.json`:
 - `lnk_parse(file_path)`
 - `lnk_directory_summary(directory_path, limit=50)`
 - `shellitems_parse(file_path)`
-- `jumplist_parse(file_path)`
+- `jumplist_parse(file_path)` — parses embedded LNK streams plus the `DestList` stream (MRU order, per-entry last-access time, pin status, originating hostname)
 - `jumplist_directory_summary(directory_path, limit=50)`
 
 ### SRUM
@@ -188,7 +198,7 @@ Add to `~/.opencode/opencode.json`:
 ### NTFS Metadata
 
 - `mft_parse(file_path, limit=100, offset=0)`
-- `mft_search_records(file_path, name_contains, limit=50)`
+- `mft_search_records(file_path, name_contains, limit=50, scan_limit=50000)`
 - `mft_timeline(file_path, limit=100)`
 - `usn_parse(file_path, limit=100)`
 - `usn_timeline(file_path, limit=100)`
@@ -318,9 +328,9 @@ windows-forensics-mcp-server/
 ## Limitations
 
 - The current `USN` sample in this workspace is empty, so positive end-to-end parsing for real USN records still requires a non-empty exported `$J` stream
-- Some advanced registry artifact extractors such as `Amcache`, `ShimCache`, and `USBSTOR` are not implemented yet
+- Chromium `app_bound_encrypted_key` (v20) decryption is not supported; only the legacy `encrypted_key` path is recovered
 - Cross-artifact correlation and detector packs are still future work
 
 ## License
 
-MIT License - see `LICENSE` if added to the repository.
+MIT License - see [`LICENSE`](LICENSE).

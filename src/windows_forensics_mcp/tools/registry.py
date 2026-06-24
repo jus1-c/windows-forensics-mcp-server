@@ -1,15 +1,12 @@
 """Registry hive parsing tools."""
 
 import codecs
-from typing import TYPE_CHECKING
 
 from windows_forensics_mcp.errors import UnsupportedArtifactError
 from windows_forensics_mcp.utils.deps import require_module
 from windows_forensics_mcp.utils.paths import ensure_file, resolve_input_path
 from windows_forensics_mcp.utils.time import filetime_to_iso, isoformat_datetime
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+from windows_forensics_mcp.utils.validation import validate_depth, validate_limit
 
 
 def _open_registry_hive(path: str):
@@ -102,7 +99,11 @@ def registry_hive_info_path(hive_path: str) -> dict[str, object]:
         registry_file.close()
 
 
-def registry_list_keys_path(hive_path: str, key_path: str | None = None, depth: int = 1) -> dict[str, object]:
+def registry_list_keys_path(
+    hive_path: str, key_path: str | None = None, depth: int = 1, max_keys: int = 5000
+) -> dict[str, object]:
+    depth = validate_depth(depth)
+    max_keys = validate_limit(max_keys, parameter="max_keys")
     path = ensure_file(resolve_input_path(hive_path))
     registry_file = _open_registry_hive(str(path))
 
@@ -112,10 +113,14 @@ def registry_list_keys_path(hive_path: str, key_path: str | None = None, depth: 
             raise UnsupportedArtifactError(f"Registry key not found: {key_path}")
 
         results = []
+        truncated = False
         stack = [(root_key, _normalize_registry_path(key_path) or root_key.name, 0)]
         while stack:
             current_key, current_path, current_depth = stack.pop()
             results.append(_key_to_dict(current_key, current_path))
+            if len(results) >= max_keys:
+                truncated = True
+                break
             if current_depth >= depth:
                 continue
 
@@ -127,6 +132,8 @@ def registry_list_keys_path(hive_path: str, key_path: str | None = None, depth: 
             "source_path": str(path),
             "requested_key": _normalize_registry_path(key_path) or root_key.name,
             "depth": depth,
+            "key_count": len(results),
+            "truncated": truncated,
             "keys": results,
         }
     finally:
@@ -159,6 +166,8 @@ def registry_search_path(
     max_results: int = 50,
     max_depth: int = 32,
 ) -> dict[str, object]:
+    max_results = validate_limit(max_results, parameter="max_results")
+    max_depth = validate_depth(max_depth, parameter="max_depth")
     path = ensure_file(resolve_input_path(hive_path))
     registry_file = _open_registry_hive(str(path))
     lowered_pattern = pattern.lower()
@@ -174,7 +183,13 @@ def registry_search_path(
 
             key_name_match = lowered_pattern in current_key.name.lower()
             if key_name_match and scope_key in {"all", "keys"}:
-                matches.append({"match_type": "key", "path": current_path, "metadata": _key_to_dict(current_key, current_path)})
+                matches.append(
+                    {
+                        "match_type": "key",
+                        "path": current_path,
+                        "metadata": _key_to_dict(current_key, current_path),
+                    }
+                )
                 if len(matches) >= max_results:
                     break
 
@@ -255,11 +270,14 @@ def _extract_userassist_entries(registry_file) -> list[dict[str, object]]:
             if len(raw_data) >= 68:
                 last_execution_time = filetime_to_iso(int.from_bytes(raw_data[60:68], "little"))
 
+            value_name = value.name
+            decoded_name = codecs.decode(value_name, "rot_13") if value_name else None
+
             entries.append(
                 {
                     "guid": guid_key.name,
-                    "name_rot13": value.name,
-                    "decoded_name": codecs.decode(value.name, "rot_13"),
+                    "name_rot13": value_name,
+                    "decoded_name": decoded_name,
                     "run_count": run_count,
                     "last_execution_time": last_execution_time,
                     "raw_hex": raw_data.hex(),
@@ -298,6 +316,190 @@ def _extract_runmru_entries(registry_file) -> list[dict[str, object]]:
     return [value for value in values if value["name"] != "MRUList"]
 
 
+def _control_set_paths(registry_file, suffix: str) -> list[str]:
+    """Build candidate control-set-relative paths.
+
+    Offline SYSTEM hives expose ControlSetNNN keys rather than the live
+    CurrentControlSet symlink, so we try the Select\\Current set first, then
+    fall back to common control sets and the live name.
+    """
+    candidates: list[str] = []
+    select_key = _get_registry_key(registry_file, "Select")
+    if select_key is not None:
+        current = select_key.get_value_by_name("Current")
+        if current is not None:
+            try:
+                candidates.append(f"ControlSet{current.get_data_as_integer():03d}\\{suffix}")
+            except (OSError, ValueError, TypeError):
+                pass
+    candidates.extend(
+        [
+            f"ControlSet001\\{suffix}",
+            f"ControlSet002\\{suffix}",
+            f"CurrentControlSet\\{suffix}",
+        ]
+    )
+    # Preserve order while removing duplicates.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    return ordered
+
+
+def _decode_shimcache_win10(data: bytes) -> list[dict[str, object]]:
+    """Decode a Windows 8.1/10 AppCompatCache (ShimCache) blob.
+
+    Each entry is framed by a '10ts' signature followed by a cache-entry size,
+    a UTF-16 path, and an 8-byte FILETIME last-modified timestamp. The header
+    length is stored in the first DWORD (0x34 on Windows 10).
+    """
+    entries: list[dict[str, object]] = []
+    if len(data) < 4:
+        return entries
+
+    header_size = int.from_bytes(data[:4], "little")
+    offset = header_size
+    while offset + 12 <= len(data):
+        if data[offset : offset + 4] != b"10ts":
+            break
+        cache_entry_size = int.from_bytes(data[offset + 8 : offset + 12], "little")
+        pointer = offset + 12
+        if pointer + 2 > len(data):
+            break
+        path_length = int.from_bytes(data[pointer : pointer + 2], "little")
+        pointer += 2
+        path = data[pointer : pointer + path_length].decode("utf-16-le", errors="replace")
+        pointer += path_length
+        last_modified = None
+        if pointer + 8 <= len(data):
+            last_modified = filetime_to_iso(int.from_bytes(data[pointer : pointer + 8], "little"))
+        entries.append(
+            {
+                "position": len(entries),
+                "path": path,
+                "last_modified_time": last_modified,
+            }
+        )
+        if cache_entry_size <= 0:
+            break
+        offset += 12 + cache_entry_size
+    return entries
+
+
+def _extract_shimcache_entries(registry_file) -> list[dict[str, object]]:
+    suffix = r"Control\Session Manager\AppCompatCache"
+    for candidate in _control_set_paths(registry_file, suffix):
+        key = _get_registry_key(registry_file, candidate)
+        if key is None:
+            continue
+        value = key.get_value_by_name("AppCompatCache")
+        if value is None:
+            continue
+        data = value.data or b""
+        decoded = _decode_shimcache_win10(data)
+        return [{"key_path": candidate, "signature": data[:4].hex(), "entries": decoded}]
+    return []
+
+
+def _extract_usbstor_entries(registry_file) -> list[dict[str, object]]:
+    string_fields = (
+        "FriendlyName",
+        "DeviceDesc",
+        "Mfg",
+        "Service",
+        "ContainerID",
+        "HardwareID",
+    )
+    for candidate in _control_set_paths(registry_file, r"Enum\USBSTOR"):
+        usbstor_key = _get_registry_key(registry_file, candidate)
+        if usbstor_key is None:
+            continue
+
+        devices: list[dict[str, object]] = []
+        for class_index in range(usbstor_key.number_of_sub_keys):
+            device_class = usbstor_key.get_sub_key(class_index)
+            for instance_index in range(device_class.number_of_sub_keys):
+                instance = device_class.get_sub_key(instance_index)
+                properties: dict[str, object] = {}
+                for field in string_fields:
+                    value = instance.get_value_by_name(field)
+                    if value is None:
+                        continue
+                    try:
+                        properties[field] = value.get_data_as_string()
+                    except (OSError, ValueError, TypeError):
+                        properties[field] = (value.data or b"").hex()
+                devices.append(
+                    {
+                        "device_class": device_class.name,
+                        "serial_number": instance.name,
+                        "last_written_time": isoformat_datetime(instance.last_written_time),
+                        "properties": properties,
+                    }
+                )
+        return [{"key_path": candidate, "device_count": len(devices), "devices": devices}]
+    return []
+
+
+def _amcache_entry_values(entry_key) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for value_index in range(entry_key.number_of_values):
+        value = entry_key.get_value(value_index)
+        decoded: object = None
+        for accessor in ("get_data_as_string", "get_data_as_integer"):
+            try:
+                decoded = getattr(value, accessor)()
+                break
+            except (OSError, ValueError, TypeError):
+                continue
+        if decoded is None:
+            decoded = (value.data or b"").hex() or None
+        values[value.name or ""] = decoded
+    return values
+
+
+def _extract_amcache_entries(registry_file, limit: int = 1000) -> list[dict[str, object]]:
+    # Modern (Win10/11) Amcache stores program executables under
+    # Root\InventoryApplicationFile; older builds use Root\File\<volume>\<id>.
+    inventory = _get_registry_key(registry_file, r"Root\InventoryApplicationFile")
+    if inventory is not None:
+        entries: list[dict[str, object]] = []
+        for index in range(inventory.number_of_sub_keys):
+            if len(entries) >= limit:
+                break
+            entry_key = inventory.get_sub_key(index)
+            entries.append(
+                {
+                    "key_name": entry_key.name,
+                    "last_written_time": isoformat_datetime(entry_key.last_written_time),
+                    "values": _amcache_entry_values(entry_key),
+                }
+            )
+        return entries
+
+    file_root = _get_registry_key(registry_file, r"Root\File")
+    if file_root is None:
+        return []
+    entries = []
+    for volume_index in range(file_root.number_of_sub_keys):
+        volume_key = file_root.get_sub_key(volume_index)
+        for entry_index in range(volume_key.number_of_sub_keys):
+            if len(entries) >= limit:
+                return entries
+            entry_key = volume_key.get_sub_key(entry_index)
+            entries.append(
+                {
+                    "key_name": f"{volume_key.name}\\{entry_key.name}",
+                    "last_written_time": isoformat_datetime(entry_key.last_written_time),
+                    "values": _amcache_entry_values(entry_key),
+                }
+            )
+    return entries
+
+
 def registry_extract_artifact_path(hive_path: str, artifact_type: str) -> dict[str, object]:
     path = ensure_file(resolve_input_path(hive_path))
     registry_file = _open_registry_hive(str(path))
@@ -312,6 +514,12 @@ def registry_extract_artifact_path(hive_path: str, artifact_type: str) -> dict[s
             entries = _extract_recentdocs_entries(registry_file)
         elif artifact_key == "runmru":
             entries = _extract_runmru_entries(registry_file)
+        elif artifact_key == "shimcache":
+            entries = _extract_shimcache_entries(registry_file)
+        elif artifact_key == "usbstor":
+            entries = _extract_usbstor_entries(registry_file)
+        elif artifact_key == "amcache":
+            entries = _extract_amcache_entries(registry_file)
         else:
             raise UnsupportedArtifactError(f"Unsupported registry artifact extractor: {artifact_type}")
 
@@ -333,10 +541,12 @@ def register_tools(mcp) -> None:
         return registry_hive_info_path(hive_path)
 
     @mcp.tool()
-    def registry_list_keys(hive_path: str, key_path: str | None = None, depth: int = 1) -> dict[str, object]:
+    def registry_list_keys(
+        hive_path: str, key_path: str | None = None, depth: int = 1, max_keys: int = 5000
+    ) -> dict[str, object]:
         """List registry keys from an offline hive."""
 
-        return registry_list_keys_path(hive_path, key_path=key_path, depth=depth)
+        return registry_list_keys_path(hive_path, key_path=key_path, depth=depth, max_keys=max_keys)
 
     @mcp.tool()
     def registry_get_values(hive_path: str, key_path: str | None = None) -> dict[str, object]:
